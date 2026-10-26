@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pipeline Watch</title>
+<style>
+  :root {
+    --bg: #0b0e13; --panel: #141922; --panel2: #1a2029; --line: #232b38; --text: #e6e9ef; --muted: #8a94a6;
+    --ok: #2fbf71; --warn: #f0a33a; --crit: #ef4b4b; --grey: #5b6474; --info: #5b8def;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Inter", "Segoe UI", system-ui, sans-serif; }
+  /* Desk: normal scrolling page. Kiosk (?kiosk=1): fixed to the screen, nothing to scroll on a TV. */
+  body { display: grid; grid-template-rows: auto auto 1fr auto; gap: 1.1vw; padding: 1.3vw; min-height: 100vh; }
+  body.kiosk { height: 100vh; overflow: hidden; cursor: none; }
+  body.kiosk section { overflow: hidden; }
+  body.kiosk .ui { display: none !important; }
+  button { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line);
+    border-radius: .4vw; padding: .35vw .8vw; cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+
+  header { display: flex; align-items: center; gap: 1.2vw; }
+  h1 { margin: 0; font-size: 1.8vw; font-weight: 600; letter-spacing: .02em; }
+  #filter { display: none; font-size: 1vw; }
+  #filter.on { display: inline-block; }
+  .spacer { flex: 1; }
+  #clock { font-size: 1.3vw; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #stale { display: none; background: var(--crit); color: #fff; padding: .4vw 1vw; border-radius: .4vw; font-size: 1.1vw; font-weight: 600; }
+  header button { font-size: .95vw; }
+  .toggle { display: inline-flex; align-items: center; gap: .4vw; font-size: .95vw; color: var(--muted); cursor: pointer; white-space: nowrap; }
+  .toggle input { width: 1vw; height: 1vw; min-width: 14px; min-height: 14px; accent-color: var(--warn); cursor: pointer; }
+  #since-note { color: var(--warn); }
+
+  #tiles { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: .8vw; }
+  .tile { background: var(--panel); border-radius: .8vw; padding: .9vw 1vw; border-left: .5vw solid var(--grey);
+    min-width: 0; cursor: pointer; transition: transform .1s, opacity .2s; }
+  .tile:hover { transform: translateY(-2px); }
+  .tile.dim { opacity: .35; }
+  .tile .name { font-size: 1.4vw; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile .state { font-size: 1vw; color: var(--muted); margin-top: .3vw; text-transform: uppercase; letter-spacing: .05em; }
+  .tile .stats { display: flex; gap: .8vw; margin-top: .6vw; font-size: .85vw; color: var(--muted); white-space: nowrap; }
+  .tile .stats b { color: var(--text); font-size: 1.2vw; }
+  .OK { border-left-color: var(--ok); } .OK .state { color: var(--ok); }
+  .WARNING { border-left-color: var(--warn); } .WARNING .state { color: var(--warn); }
+  .CRITICAL { border-left-color: var(--crit); } .CRITICAL .state { color: var(--crit); }
+  .tile.CRITICAL { animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 50% { background: #2a1517; } }
+
+  main { display: grid; grid-template-columns: 1.4fr 1fr; gap: 1.2vw; min-height: 0; }
+  section { background: var(--panel); border-radius: .8vw; padding: 1.2vw; min-width: 0; align-self: start; }
+  body.kiosk main { min-height: 0; } body.kiosk section { align-self: stretch; }
+  h2 { margin: 0 0 .8vw; font-size: 1.05vw; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
+  .finding { display: grid; grid-template-columns: .8vw 9vw 1fr auto; align-items: center; gap: .8vw;
+    padding: .7vw .4vw; border-bottom: 1px solid var(--line); font-size: 1.3vw; cursor: pointer; border-radius: .3vw; }
+  .finding:hover, .clickable:hover { background: var(--panel2); }
+  .finding > .what { min-width: 0; }
+  .dot { width: .8vw; height: .8vw; border-radius: 50%; }
+  .dot.CRITICAL { background: var(--crit); } .dot.WARNING { background: var(--warn); } .dot.INFO { background: var(--info); }
+  .finding .env { color: var(--muted); }
+  .detail { display: block; font-size: .95vw; color: var(--muted); margin-top: .2vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .finding .count { font-size: 1.6vw; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .finding .right { display: flex; align-items: center; gap: .8vw; }
+  .rowlink { font-size: .85vw; color: var(--muted); text-decoration: none; border: 1px solid var(--line); border-radius: .3vw; padding: .1vw .5vw; white-space: nowrap; }
+  .rowlink:hover { color: var(--text); border-color: var(--muted); }
+  .links { display: flex; flex-direction: column; gap: 6px; }
+  .glink { color: #8fb4ff; text-decoration: none; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; }
+  .glink:hover { border-color: var(--muted); }
+  .tag { font-size: .75vw; font-weight: 700; color: var(--crit); border: 1px solid var(--crit); border-radius: .3vw; padding: 0 .4vw; margin-left: .6vw; vertical-align: middle; }
+  .allclear { font-size: 2vw; color: var(--ok); padding: 2vw 0; }
+
+  .trends { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1.6vw; }
+  .trend, .recurring { display: grid; grid-template-columns: 6vw 1fr 3vw; align-items: center; gap: .6vw; padding: .3vw .2vw; font-size: .95vw; border-radius: .3vw; }
+  .trend svg { width: 100%; height: 1.6vw; }
+  .now { text-align: right; font-variant-numeric: tabular-nums; }
+  .recurring .env { color: var(--muted); }
+  .recurring .what { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .clickable { cursor: pointer; }
+
+  footer { display: flex; gap: 1.5vw; align-items: center; font-size: .95vw; color: var(--muted); min-height: 1.4vw; }
+  footer .ack { cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  footer .ack:hover { color: var(--text); }
+
+  /* side panel */
+  #drawer { position: fixed; top: 0; right: 0; height: 100%; width: min(640px, 92vw); background: var(--panel);
+    border-left: 1px solid var(--line); box-shadow: -10px 0 40px rgba(0,0,0,.5); transform: translateX(100%);
+    transition: transform .2s; padding: 22px 24px; overflow-y: auto; font-size: 14px; line-height: 1.45; z-index: 10; }
+  #drawer.open { transform: none; }
+  #drawer h3 { margin: 0 0 4px; font-size: 18px; }
+  #drawer .muted { color: var(--muted); }
+  #drawer .close { position: absolute; top: 14px; right: 16px; }
+  #drawer .grid { display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px; margin: 14px 0; }
+  #drawer .grid div:nth-child(odd) { color: var(--muted); }
+  #drawer .box { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; word-break: break-word; margin: 8px 0 14px; white-space: pre-wrap; }
+  #drawer h4 { margin: 18px 0 6px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 2px 7px; font: 12px ui-monospace, monospace; cursor: pointer; }
+  .chip:hover { border-color: var(--muted); }
+  #drawer form { display: grid; gap: 8px; }
+  #drawer input, #drawer select { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; font: inherit; }
+  #drawer table { width: 100%; border-collapse: collapse; }
+  #drawer td { padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--panel2); border: 1px solid var(--line);
+    padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; font-size: 14px; z-index: 20; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Pipeline Watch</h1>
+  <button id="filter" class="ui" title="Clear filter"></button>
+  <span class="spacer"></span>
+  <div id="stale">Data is stale — watcher not responding</div>
+  <label class="ui toggle" title="Hide issues that already existed when the service started">
+    <input type="checkbox" id="since-start"> Only since service start<span id="since-note"></span></label>
+  <button class="ui" id="btn-history">Resolved / Checks</button>
+  <div id="clock"></div>
+</header>
+<div id="tiles"></div>
+<main>
+  <section><h2>Firing now</h2><div id="findings"></div></section>
+  <section>
+    <div class="trends">
+      <div><h2>Stuck docs · 24h</h2><div id="trend-stuck"></div></div>
+      <div><h2>Failures (30 min) · 24h</h2><div id="trend-failed"></div></div>
+    </div>
+    <h2 style="margin-top:1.2vw">Recurring errors · 15 min</h2><div id="recurring"></div>
+  </section>
+</main>
+<footer id="footer"></footer>
+<aside id="drawer" aria-hidden="true"></aside>
+<div id="toast"></div>
+
+<script>
+const REFRESH_MS = 30000, STALE_MS = 3 * 60000, IDLE_CLOSE_MS = 2 * 60000;
+const params = new URLSearchParams(location.search);
+if (params.get('kiosk') === '1') document.body.classList.add('kiosk');
+
+let data = null, resolved = [], lastOk = 0, envFilter = null, drawerView = null, lastInput = Date.now();
+
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+const last = (pts) => pts && pts.length ? pts[pts.length - 1].v : null;
+const fmt = (v) => v == null ? '–' : (v >= 1000 ? (v / 1000).toFixed(1) + 'k' : String(Math.round(v)));
+const hhmm = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const when = (iso) => iso ? new Date(iso).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '–';
+const ago = (iso) => {
+  if (!iso) return '';
+  const m = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
+  return m < 60 ? m + 'm' : m < 1440 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : Math.floor(m / 1440) + 'd ' + Math.floor((m % 1440) / 60) + 'h';
+};
+const toast = (msg) => { const t = document.getElementById('toast'); t.textContent = msg; t.style.opacity = 1; setTimeout(() => t.style.opacity = 0, 1500); };
+const STATE_LABEL = { OK: 'healthy', WARNING: 'warning', CRITICAL: 'critical', UNREACHABLE: 'no data', STARTING: 'starting', NOT_CONFIGURED: 'not configured' };
+const ORDER = { CRITICAL: 0, WARNING: 1, INFO: 2 };
+const allFindings = () => data ? data.envs.flatMap(e => e.findings) : [];
+const byKey = (key) => allFindings().find(f => f.key === key);
+const inFilter = (env) => !envFilter || env === envFilter;
+// "Only since service start": hide issues first seen before this run of the service. A view filter only:
+// detection still looks back as far as each check needs, and env tiles keep their true colour.
+let sinceStart = store.get('since-start') === '1' || params.get('since') === 'start';
+document.getElementById('since-start').checked = sinceStart;
+const isOld = (x) => sinceStart && data && x.firstSeen && new Date(x.firstSeen) < new Date(data.startedAt);
+
+/* ---------- main view ---------- */
+function tile(env) {
+  const t = el('div', 'tile ' + env.state + (envFilter && env.env !== envFilter ? ' dim' : ''));
+  t.append(el('div', 'name', env.env), el('div', 'state', STATE_LABEL[env.state] || env.state));
+  const stats = el('div', 'stats');
+  const s = el('span'); s.append(el('b', null, fmt(last(env.trends.stuck))), ' stuck');
+  const f = el('span'); f.append(el('b', null, fmt(last(env.trends.failed30m))), ' failed');
+  stats.append(s, f); t.append(stats);
+  t.onclick = () => { envFilter = envFilter === env.env ? null : env.env; render(); };
+  return t;
+}
+
+function sparkline(points, color) {
+  const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 100 20'); svg.setAttribute('preserveAspectRatio', 'none');
+  if (!points || points.length < 2) return svg;
+  const t0 = points[0].t, t1 = points[points.length - 1].t || t0 + 1, max = Math.max(1, ...points.map(p => p.v));
+  const path = document.createElementNS(ns, 'path');
+  path.setAttribute('d', points.map((p, i) => (i ? 'L' : 'M') + ((p.t - t0) / (t1 - t0 || 1) * 100).toFixed(2) + ' ' + (19 - p.v / max * 18).toFixed(2)).join(' '));
+  path.setAttribute('fill', 'none'); path.setAttribute('stroke', color); path.setAttribute('stroke-width', '1.2'); path.setAttribute('vector-effect', 'non-scaling-stroke');
+  svg.append(path); return svg;
+}
+
+function trendRows(key, target) {
+  target.replaceChildren();
+  data.envs.filter(e => e.trends[key] && inFilter(e.env)).forEach(e => {
+    const row = el('div', 'trend'), v = last(e.trends[key]);
+    row.append(el('span', null, e.env), sparkline(e.trends[key], v > 0 ? 'var(--warn)' : 'var(--ok)'), el('span', 'now', fmt(v)));
+    target.append(row);
+  });
+}
+
+function render() {
+  if (!data) return;
+  document.getElementById('tiles').replaceChildren(...data.envs.map(tile));
+  const f = document.getElementById('filter');
+  f.textContent = envFilter ? 'Showing ' + envFilter + ' ✕' : ''; f.classList.toggle('on', !!envFilter);
+
+  const all = allFindings().filter(x => inFilter(x.env));
+  const firingAll = all.filter(x => x.finding.severity !== 'INFO' && !x.ack);
+  const hiddenOld = firingAll.filter(isOld).length;
+  const hiddenAll = hiddenOld + all.filter(x => x.finding.severity === 'INFO' && isOld(x)).length;
+  document.getElementById('since-note').textContent = sinceStart
+    ? ' (' + hhmm(data.startedAt) + (hiddenAll ? ', ' + hiddenAll + ' older hidden' : '') + ')' : '';
+  const firing = firingAll.filter(x => !isOld(x))
+    .sort((a, b) => ORDER[a.finding.severity] - ORDER[b.finding.severity] || (b.finding.count || 0) - (a.finding.count || 0));
+  data.envs.filter(e => e.state === 'UNREACHABLE' && inFilter(e.env)).forEach(e =>
+    firing.unshift({ env: e.env, check: 'all', key: null, finding: { severity: 'CRITICAL', title: 'No data from env', count: 0, detail: 'all checks failing' } }));
+  const list = document.getElementById('findings');
+  list.replaceChildren();
+  if (!firing.length) list.append(el('div', 'allclear', hiddenOld ? 'No new issues since ' + hhmm(data.startedAt)
+    : envFilter ? envFilter + ' is healthy' : 'All environments healthy'));
+  // The TV can only fit ~12 rows; at a desk show everything (the page scrolls).
+  const kiosk = document.body.classList.contains('kiosk');
+  firing.slice(0, kiosk ? 12 : firing.length).forEach(x => {
+    const row = el('div', 'finding');
+    const title = el('span', 'what', x.finding.title);
+    if (x.reopened) title.append(el('span', 'tag', 'REOPENED'));
+    const detail = [x.firstSeen ? 'since ' + hhmm(x.firstSeen) + ' (' + ago(x.firstSeen) + ')' : '', x.finding.detail].filter(Boolean).join(' · ');
+    if (detail) title.append(el('span', 'detail', detail));
+    const right = el('span', 'right');
+    const first = (x.finding.links || [])[0];
+    if (first) {
+      // Quick access on a desk; hidden in kiosk mode (class "ui").
+      const a = el('a', 'rowlink ui', 'Grafana ↗'); a.href = first.url; a.target = '_blank'; a.rel = 'noopener'; a.title = first.label;
+      a.onclick = (e) => e.stopPropagation();
+      right.append(a);
+    }
+    right.append(el('span', 'count', x.finding.count ? fmt(x.finding.count) : ''));
+    row.append(el('span', 'dot ' + x.finding.severity), el('span', 'env', x.env), title, right);
+    if (x.key) row.onclick = () => openIssue(x.key);
+    list.append(row);
+  });
+  if (kiosk && firing.length > 12) list.append(el('div', 'detail', '+ ' + (firing.length - 12) + ' more'));
+
+  const rec = document.getElementById('recurring');
+  rec.replaceChildren();
+  const recurringAll = all.filter(x => x.finding.severity === 'INFO');
+  const recurringOld = recurringAll.filter(isOld).length;
+  recurringAll.filter(x => !isOld(x)).sort((a, b) => b.finding.count - a.finding.count).slice(0, document.body.classList.contains('kiosk') ? 6 : undefined).forEach(x => {
+    const row = el('div', 'recurring clickable');
+    row.append(el('span', 'env', x.env), el('span', 'what', x.finding.title), el('span', 'now', fmt(x.finding.count)));
+    row.onclick = () => openIssue(x.key);
+    rec.append(row);
+  });
+  if (!rec.children.length) rec.append(el('div', 'detail', recurringOld ? 'none new since ' + hhmm(data.startedAt) : 'none'));
+  if (recurringOld && rec.children.length) rec.append(el('div', 'detail', recurringOld + ' older hidden'));
+
+  trendRows('stuck', document.getElementById('trend-stuck'));
+  trendRows('failed30m', document.getElementById('trend-failed'));
+
+  const foot = document.getElementById('footer');
+  foot.replaceChildren();
+  const acked = all.filter(x => x.ack);
+  if (acked.length) {
+    foot.append(el('span', null, acked.length + ' acknowledged:'));
+    acked.forEach(x => { const a = el('span', 'ack', x.env + ' · ' + x.finding.title + ' (' + x.ack.by + ')'); a.onclick = () => openIssue(x.key); foot.append(a); });
+  }
+  if (drawerView) drawerView();   // keep an open panel in sync with fresh data
+}
+
+/* ---------- side panel ---------- */
+const drawer = document.getElementById('drawer');
+function openDrawer(build) { drawerView = build; build(); drawer.classList.add('open'); drawer.setAttribute('aria-hidden', 'false'); }
+function closeDrawer() { drawerView = null; drawer.classList.remove('open'); drawer.setAttribute('aria-hidden', 'true'); }
+
+function chips(ids) {
+  const box = el('div', 'chips');
+  ids.forEach(id => { const c = el('span', 'chip', id); c.title = 'Click to copy'; c.onclick = () => copy(id, 'Copied ' + id); box.append(c); });
+  if (ids.length > 1) { const all = el('span', 'chip', 'copy all'); all.onclick = () => copy(ids.join('\n'), 'Copied ' + ids.length + ' ids'); box.append(all); }
+  return box;
+}
+async function copy(text, msg) { try { await navigator.clipboard.writeText(text); toast(msg); } catch { toast('Copy failed — select manually'); } }
+
+function openIssue(key) {
+  openDrawer(() => {
+    const x = byKey(key);
+    drawer.replaceChildren();
+    const close = el('button', 'close', '✕'); close.onclick = closeDrawer; drawer.append(close);
+    if (!x) { drawer.append(el('h3', null, 'Resolved'), el('p', 'muted', 'This issue is no longer active.')); return; }
+    const h = el('h3', null, x.finding.title); if (x.reopened) h.append(el('span', 'tag', 'REOPENED'));
+    drawer.append(h, el('div', 'muted', x.env + ' · ' + x.check + ' · ' + x.finding.severity.toLowerCase()));
+    const g = el('div', 'grid');
+    [['Count', x.finding.count ? String(x.finding.count) : '–'],
+     ['First seen', x.firstSeen ? when(x.firstSeen) + ' (' + ago(x.firstSeen) + ' ago)' : '–'],
+     ['Last seen', x.lastSeen ? when(x.lastSeen) + ' (' + ago(x.lastSeen) + ' ago)' : '–']].forEach(([k, v]) => g.append(el('div', null, k), el('div', null, v)));
+    drawer.append(g);
+    if (x.finding.detail) drawer.append(el('h4', null, 'Detail'), el('div', 'box', x.finding.detail));
+    const links = x.finding.links || [];
+    if (links.length) {
+      drawer.append(el('h4', null, 'Open in Grafana'));
+      const box = el('div', 'links');
+      links.forEach(l => { const a = el('a', 'glink', l.label + ' ↗'); a.href = l.url; a.target = '_blank'; a.rel = 'noopener'; box.append(a); });
+      drawer.append(box);
+    }
+    const ids = x.finding.sampleIds || [];
+    drawer.append(el('h4', null, 'Sample doc IDs (' + ids.length + ')'));
+    drawer.append(ids.length ? chips(ids) : el('div', 'muted', 'None for this kind of issue.'));
+
+    if (x.finding.severity === 'INFO') return;
+    drawer.append(el('h4', null, 'Acknowledge'));
+    if (x.ack) {
+      drawer.append(el('div', 'box', x.ack.by + ' · until ' + when(x.ack.until) + '\n' + x.ack.reason));
+      const b = el('button', null, 'Un-acknowledge (put back on the board)'); b.onclick = () => unack(key); drawer.append(b);
+    } else {
+      const form = el('form');
+      const by = el('input'); by.placeholder = 'Your name'; by.required = true; by.value = store.get('ack-by') || '';
+      const reason = el('input'); reason.placeholder = 'Why — ticket, who is on it…'; reason.required = true;
+      const hours = el('select'); [['1', '1 hour'], ['4', '4 hours'], ['24', '24 hours'], ['72', '3 days']].forEach(([v, t]) => hours.append(new Option(t, v, false, v === '4')));
+      const submit = el('button', null, 'Acknowledge');
+      form.append(by, reason, hours, el('div', 'muted', 'Hidden from "Firing now" until then — back sooner if it turns critical or its count doubles.'), submit);
+      form.onsubmit = async (ev) => {
+        ev.preventDefault();
+        store.set('ack-by', by.value.trim());
+        const res = await fetch('api/acks', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key, by: by.value.trim(), reason: reason.value.trim(), hours: Number(hours.value) }) });
+        toast(res.ok ? 'Acknowledged' : 'Could not acknowledge (' + res.status + ')');
+        await refresh();
+        if (res.ok) openIssue(key);
+      };
+      // Don't rebuild the form (and lose typing) on background refresh.
+      drawerView = null;
+      drawer.append(form);
+    }
+  });
+}
+
+async function unack(key) {
+  const res = await fetch('api/acks?key=' + encodeURIComponent(key), { method: 'DELETE' });
+  toast(res.ok ? 'Back on the board' : 'Failed (' + res.status + ')');
+  await refresh(); openIssue(key);
+}
+
+function openHistory() {
+  openDrawer(() => {
+    drawer.replaceChildren();
+    const close = el('button', 'close', '✕'); close.onclick = closeDrawer; drawer.append(close);
+    drawer.append(el('h3', null, 'Resolved · last 24h' + (envFilter ? ' · ' + envFilter : '')));
+    const res = resolved.filter(r => inFilter(r.env));
+    if (!res.length) drawer.append(el('p', 'muted', 'Nothing resolved in the last 24h.'));
+    else {
+      const t = el('table');
+      res.forEach(r => {
+        const tr = el('tr'), d = el('td'); d.append(el('span', 'dot ' + r.severity));
+        const what = el('td'); what.append(el('div', null, r.env + ' · ' + r.title), el('div', 'muted', 'active ' + (r.firstSeen ? when(r.firstSeen) : '?') + ' → resolved ' + when(r.resolvedAt)));
+        tr.append(d, what); t.append(tr);
+      });
+      drawer.append(t);
+    }
+    const checks = data.envs.filter(e => inFilter(e.env)).flatMap(e => e.checks.map(c => ({ env: e.env, ...c })));
+    const bad = checks.filter(c => !c.ok);
+    drawer.append(el('h4', null, 'Checks: ' + (checks.length - bad.length) + ' ok, ' + bad.length + ' failing'));
+    if (bad.length) {
+      const t = el('table');
+      bad.forEach(c => { const tr = el('tr'); const w = el('td'); w.append(el('div', null, c.env + ' · ' + c.check), el('div', 'muted', c.error || '')); tr.append(w, el('td', 'muted', c.lastSuccess ? 'ok ' + ago(c.lastSuccess) + ' ago' : 'never ok')); t.append(tr); });
+      drawer.append(t);
+    }
+  });
+}
+
+/* ---------- plumbing ---------- */
+document.getElementById('filter').onclick = () => { envFilter = null; render(); };
+document.getElementById('btn-history').onclick = openHistory;
+document.getElementById('since-start').onchange = (e) => { sinceStart = e.target.checked; store.set('since-start', sinceStart ? '1' : '0'); render(); };
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
+['mousemove', 'keydown', 'click', 'touchstart'].forEach(ev => document.addEventListener(ev, () => lastInput = Date.now(), { passive: true }));
+
+async function refresh() {
+  try {
+    const [s, r] = await Promise.all([fetch('api/status', { cache: 'no-store' }), fetch('api/resolved', { cache: 'no-store' })]);
+    if (!s.ok) throw new Error('HTTP ' + s.status);
+    data = await s.json(); resolved = r.ok ? await r.json() : [];
+    lastOk = Date.now();
+    render();
+  } catch (e) { console.warn('refresh failed', e); }
+}
+
+setInterval(() => {
+  document.getElementById('clock').textContent = new Date().toLocaleString();
+  document.getElementById('stale').style.display = Date.now() - lastOk > STALE_MS ? 'block' : 'none';
+  // The TV must drift back to its clean view: close the panel and clear filters after 2 idle minutes.
+  if (Date.now() - lastInput > IDLE_CLOSE_MS && (drawer.classList.contains('open') || envFilter)) { closeDrawer(); envFilter = null; render(); }
+}, 1000);
+// Deep links: ?issue=<key> opens that issue's panel, ?env=<name> filters, ?view=history opens history.
+refresh().then(() => {
+  if (params.get('env')) { envFilter = params.get('env'); render(); }
+  if (params.get('issue')) openIssue(params.get('issue'));
+  else if (params.get('view') === 'history') openHistory();
+});
+setInterval(refresh, REFRESH_MS);
+</script>
+</body>
+</html>

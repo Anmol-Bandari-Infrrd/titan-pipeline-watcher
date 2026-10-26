@@ -1,0 +1,7 @@
+target/
+.idea/
+*.iml
+logs/
+application-local.yml
+pipeline-watcher-acks.json
+pipeline-watcher-state.json

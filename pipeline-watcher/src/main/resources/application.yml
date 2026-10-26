@@ -1,0 +1,148 @@
+server:
+  port: ${PORT:8530}
+  servlet:
+    context-path: /pipeline-watcher
+
+spring:
+  application:
+    name: PipelineWatcher
+  config:
+    # Local runs: real creds live in a git-ignored application-local.yml next to the module (see README).
+    # Works whether the IDE's working directory is the repo root or the module.
+    import:
+      - optional:file:./application-local.yml
+      - optional:file:./pipeline-watcher/application-local.yml
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+
+watcher:
+  # Only docs touched within this window are considered (older IN_PROGRESS docs are historical leftovers).
+  # Must be long: with 72h, auprod docs stuck since 2026-10-16 silently dropped off the board.
+  lookback-hours: ${WATCHER_LOOKBACK_HOURS:168}
+  # Docs (or their parents) in these subStatuses are waiting for a human, not stuck in the pipeline.
+  review-sub-statuses:
+    - Page to be reviewed
+    - To be reviewed
+    - To be validated
+    - Page to be validated
+    - Risk to be reviewed
+  # user_model.modelType values whose docs are intermediate classification records, not real work.
+  classifier-model-types:
+    - page_classification
+  default-stuck-minutes: 30
+  # Per-stage overrides, keyed by the last audit moduleName seen for the doc. Initial guesses: tune.
+  stage-stuck-minutes:
+    OCROutputConsumer: 20
+    GENIE: 45
+    GENIE_VISION: 45
+    BIBOT: 45
+    BIBOT_VISION: 45
+    TABL_GENIE: 60
+  sla-risk-fraction: 0.7
+  sample-size: 20
+  # Pods check: app namespaces only. telemetry, kube-system, mongo-backup, argo etc. are left out
+  # so monitoring tooling restarting doesn't turn the board red.
+  pod-namespaces: [orch, core, prep, cidc, portal, base, correction, feedback]
+  # Logs check: app namespaces only ("base" is left out: its mongodb logs ~49k "error" lines/h on usprod).
+  log-namespaces: [orch, core, prep, cidc, portal, correction, feedback]
+  thresholds:
+    stuck-min-docs: 5          # more than N stuck docs at one stage
+    failure-min-count: 5       # more than N failures in 30 min for one customer ...
+    failure-spike-factor: 3    # ... and more than 3x (same window yesterday + 1)
+    llm-failure-rate: 0.2      # more than 20% of a model's calls failing ...
+    llm-min-calls: 20          # ... with at least 20 calls in 10 min
+    module-failures: 10        # more than N failed audit rows for one module in 15 min
+    queue-backlog: 50          # backlog never below N for 30 min and growing
+    pod-restarts: 3            # N+ restarts of one workload in 30 min
+    heap-ratio: 0.9            # Java heap above 90% for 15 min
+    new-error-min-count: 10    # an error not seen in 7 days, N+ times in 15 min
+
+  # Credentials reuse the env var names the MCP servers already use (MONGO_<ENV>_CONN, GRAFANA_*).
+  # Grafana: set GRAFANA_<ENV>_TOKEN (service-account token, Viewer) when available; it replaces user/password.
+  # Use read-only users. A blank URI just disables that side of the env.
+  envs:
+    - name: usprod
+      enabled: true
+      mongo-uri: ${MONGO_USPROD_CONN:}
+      grafana-url: ${GRAFANA_USPROD_URL:https://grafana.usprod01-us-west-2.infrrd.cloud}
+      grafana-token: ${GRAFANA_USPROD_TOKEN:}
+      grafana-user: ${GRAFANA_USERNAME:}
+      grafana-password: ${GRAFANA_PASSWORD:}
+      prom-datasource-uid: prometheus
+      ignored-queues: "celery|classification-correction-input|ally-harness-audit-request"
+    - name: swbcprod
+      enabled: true
+      mongo-uri: ${MONGO_SWBCPROD_CONN:}
+      grafana-url: ${GRAFANA_SWBCPROD_URL:}
+      grafana-token: ${GRAFANA_SWBCPROD_TOKEN:}
+      grafana-user: ${GRAFANA_USERNAME:}
+      grafana-password: ${GRAFANA_PASSWORD:}
+      sla-due-date-param: DocumentDueDate
+    - name: auprod
+      enabled: true
+      mongo-uri: ${MONGO_AUPROD_CONN:}
+      grafana-url: ${GRAFANA_AUPROD_URL:}
+      grafana-token: ${GRAFANA_AUPROD_TOKEN:}
+      grafana-user: ${GRAFANA_USERNAME:}
+      grafana-password: ${GRAFANA_PASSWORD:}
+    - name: euprod
+      enabled: true
+      mongo-uri: ${MONGO_EUPROD_CONN:}
+      grafana-url: ${GRAFANA_EUPROD_URL:}
+      grafana-token: ${GRAFANA_EUPROD_TOKEN:}
+      grafana-user: ${GRAFANA_USERNAME:}
+      grafana-password: ${GRAFANA_PASSWORD:}
+    - name: caprod
+      enabled: true
+      mongo-uri: ${MONGO_CAPROD_CONN:}
+      grafana-url: ${GRAFANA_CAPROD_URL:}
+      grafana-token: ${GRAFANA_CAPROD_TOKEN:}
+      grafana-user: ${GRAFANA_USERNAME:}
+      grafana-password: ${GRAFANA_PASSWORD:}
+    - name: rkt1prod
+      enabled: true
+      mongo-uri: ${MONGO_RKT1PROD_CONN:}
+      grafana-url: ${GRAFANA_RKT1PROD_URL:}
+      grafana-token: ${GRAFANA_RKT1PROD_TOKEN:}
+      grafana-user: ${GRAFANA_USERNAME:}
+      grafana-password: ${GRAFANA_PASSWORD:}
+    - name: rkt2prod
+      enabled: true
+      mongo-uri: ${MONGO_RKT2PROD_CONN:}
+      grafana-url: ${GRAFANA_RKT2PROD_URL:}
+      grafana-token: ${GRAFANA_RKT2PROD_TOKEN:}
+      grafana-user: ${GRAFANA_USERNAME:}
+      grafana-password: ${GRAFANA_PASSWORD:}
+    - name: snprod
+      enabled: true
+      mongo-uri: ${MONGO_SNPROD_CONN:}
+      grafana-url: ${GRAFANA_SNPROD_URL:}
+      grafana-token: ${GRAFANA_SNPROD_TOKEN:}
+      grafana-user: ${GRAFANA_USERNAME:}
+      grafana-password: ${GRAFANA_PASSWORD:}
+    - name: arkprod
+      enabled: true
+      mongo-uri: ${MONGO_ARKPROD_CONN:}
+      grafana-url: ${GRAFANA_ARKPROD_URL:}
+      grafana-token: ${GRAFANA_ARKPROD_TOKEN:}
+      grafana-user: ${GRAFANA_USERNAME:}
+      grafana-password: ${GRAFANA_PASSWORD:}
+    # UATs: off by default so the TV only turns red for client-facing problems.
+    - name: uat
+      enabled: false
+      mongo-uri: ${MONGO_UAT_CONN:}
+      grafana-url: ${GRAFANA_UAT_URL:https://grafana.uat01-us-west-2.infrrd.cloud}
+      grafana-token: ${GRAFANA_UAT_TOKEN:}
+      grafana-user: ${GRAFANA_USERNAME:}
+      grafana-password: ${GRAFANA_PASSWORD:}
+    - name: swbcuat
+      enabled: false
+      mongo-uri: ${MONGO_SWBCUAT_CONN:}
+      grafana-url: ${GRAFANA_SWBCUAT_URL:}
+      grafana-token: ${GRAFANA_SWBCUAT_TOKEN:}
+      grafana-user: ${GRAFANA_USERNAME:}
+      grafana-password: ${GRAFANA_PASSWORD:}
